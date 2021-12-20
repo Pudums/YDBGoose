@@ -65,6 +65,8 @@ func NewStore(d Dialect) (Store, error) {
 		querier = &dialectquery.Clickhouse{}
 	case Vertica:
 		querier = &dialectquery.Vertica{}
+	case YDB:
+		querier = &dialectquery.YDB{}
 	default:
 		return nil, fmt.Errorf("unknown querier dialect: %v", d)
 	}

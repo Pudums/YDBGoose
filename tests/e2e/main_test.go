@@ -1,24 +1,37 @@
 package e2e
 
 import (
+	"context"
 	"database/sql"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
+	"time"
+
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
+	_ "github.com/ydb-platform/ydb-go-sql"
 
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/internal/check"
 	"github.com/pressly/goose/v3/internal/testdb"
+
+	"github.com/ory/dockertest/v3"
+	"github.com/ory/dockertest/v3/docker"
 )
 
 const (
 	dialectPostgres = "postgres"
 	dialectMySQL    = "mysql"
+	dialectYDB      = "ydb"
 )
 
 // Flags.
@@ -66,7 +79,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	switch *dialect {
-	case dialectPostgres, dialectMySQL:
+	case dialectPostgres, dialectMySQL, dialectYDB:
 	default:
 		log.Printf("dialect not supported: %q", *dialect)
 		os.Exit(1)
@@ -100,6 +113,7 @@ func newDockerDB(t *testing.T) (*sql.DB, error) {
 	options := []testdb.OptionsFunc{
 		testdb.WithBindPort(*bindPort),
 		testdb.WithDebug(*debug),
+		testdb.WithFolder(t.Name()),
 	}
 	var (
 		db      *sql.DB
@@ -111,10 +125,114 @@ func newDockerDB(t *testing.T) (*sql.DB, error) {
 		db, cleanup, err = testdb.NewPostgres(options...)
 	case dialectMySQL:
 		db, cleanup, err = testdb.NewMariaDB(options...)
+	case dialectYDB:
+		return newDockerYDB(t, *bindPort)
 	default:
 		return nil, fmt.Errorf("unsupported dialect: %q", *dialect)
 	}
+
 	check.NoError(t, err)
 	t.Cleanup(cleanup)
+	return db, nil
+}
+
+// getFreePort asks the kernel for a free open port that is ready to use.
+func getFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return 0, err
+	}
+
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+func newDockerYDB(t *testing.T, bindPort int) (*sql.DB, error) {
+	var certsDirectory = path.Join(os.TempDir(), "ydb_certs")
+
+	if bindPort == 0 {
+		// Choose fixed port for YDB, because internal discovery machinery tries to redirect on local port, instead of
+		// binded port from docker.
+		bindPort, _ = getFreePort()
+	}
+
+	os.Setenv("YDB_ANONYMOUS_CREDENTIALS", "1")
+	os.Setenv("YDB_SSL_ROOT_CERTIFICATES_FILE", path.Join(certsDirectory, "ca.pem"))
+
+	// Uses a sensible default on windows (tcp/http) and linux/osx (socket).
+	pool, err := dockertest.NewPool("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to docker: %v", err)
+	}
+	options := &dockertest.RunOptions{
+		Repository:   "cr.yandex/yc/yandex-docker-local-ydb",
+		Tag:          "latest",
+		ExposedPorts: []string{fmt.Sprintf("%d/tcp", bindPort)},
+		Env: []string{
+			"YDB_LOCAL_SURVIVE_RESTART=true",
+			"YDB_USE_IN_MEMORY_PDISKS=true",
+			"YDB_YQL_SYNTAX_VERSION=1",
+			"YDB_GRPC_ENABLE_TLS=true",
+			fmt.Sprintf("GRPC_TLS_PORT=%d", bindPort),
+			"YDB_GRPC_TLS_DATA_PATH=/ydb_certs",
+		},
+		Labels:       map[string]string{"goose_test": "1"},
+		PortBindings: make(map[docker.Port][]docker.PortBinding),
+		Mounts:       []string{certsDirectory + ":/ydb_certs"},
+		Hostname:     "localhost",
+		Cmd:          []string{"/local_ydb", "deploy", "--ydb-working-dir", "/ydb_data", "--ydb-binary-path", "/ydb_server", "--fixed-ports"},
+	}
+
+	options.PortBindings[docker.Port(fmt.Sprintf("%d/tcp", bindPort))] = []docker.PortBinding{
+		{HostPort: strconv.Itoa(bindPort)},
+	}
+
+	container, err := pool.RunWithOptions(
+		options,
+		func(config *docker.HostConfig) {
+			// Set AutoRemove to true so that stopped container goes away by itself.
+			config.AutoRemove = true
+			config.RestartPolicy = docker.RestartPolicy{Name: "no"}
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create docker container: %v", err)
+	}
+	t.Cleanup(func() {
+		if *debug {
+			// User must manually delete the Docker container.
+			return
+		}
+		if err := pool.Purge(container); err != nil {
+			log.Printf("failed to purge resource: %v", err)
+		}
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to start resource: %v", err)
+	}
+	// YDB DSN: grpc://host:port/?database=/dbname&token=token
+	dsn := fmt.Sprintf("grpcs://localhost:%d/?database=/local", bindPort)
+	var db *sql.DB
+	// Exponential backoff-retry, because the application in the container
+	// might not be ready to accept connections yet. Add an extra sleep
+	// because ydb containers take much longer to startup.
+	time.Sleep(10 * time.Second)
+	if err := pool.Retry(func() error {
+		var err error
+		db, err = sql.Open(dialectYDB, dsn)
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return db.PingContext(ctx)
+	},
+	); err != nil {
+		return nil, fmt.Errorf("could not connect to docker database: %v", err)
+	}
 	return db, nil
 }

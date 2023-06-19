@@ -11,6 +11,9 @@ import (
 	"syscall"
 	"testing"
 
+	_ "github.com/go-sql-driver/mysql"
+	_ "github.com/lib/pq"
+
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/internal/check"
 	"github.com/pressly/goose/v3/internal/testdb"
@@ -19,6 +22,7 @@ import (
 const (
 	dialectPostgres = "postgres"
 	dialectMySQL    = "mysql"
+	dialectYDB      = "ydb"
 )
 
 // Flags.
@@ -66,7 +70,7 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 
 	switch *dialect {
-	case dialectPostgres, dialectMySQL:
+	case dialectPostgres, dialectMySQL, dialectYDB:
 	default:
 		log.Printf("dialect not supported: %q", *dialect)
 		os.Exit(1)
@@ -100,6 +104,7 @@ func newDockerDB(t *testing.T) (*sql.DB, error) {
 	options := []testdb.OptionsFunc{
 		testdb.WithBindPort(*bindPort),
 		testdb.WithDebug(*debug),
+		testdb.WithFolder(t.Name()),
 	}
 	var (
 		db      *sql.DB
@@ -111,6 +116,8 @@ func newDockerDB(t *testing.T) (*sql.DB, error) {
 		db, cleanup, err = testdb.NewPostgres(options...)
 	case dialectMySQL:
 		db, cleanup, err = testdb.NewMariaDB(options...)
+	case dialectYDB:
+		db, cleanup, err = testdb.NewYdb(options...)
 	default:
 		return nil, fmt.Errorf("unsupported dialect: %q", *dialect)
 	}

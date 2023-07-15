@@ -11,7 +11,7 @@ require (
 	github.com/vertica/vertica-sql-go v1.3.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.42.1
 	github.com/ziutek/mymysql v1.5.4
-	modernc.org/sqlite v1.23.1
+	modernc.org/sqlite v1.24.0
 )
 
 require (

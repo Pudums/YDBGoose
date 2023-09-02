@@ -6,7 +6,7 @@ require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.10.1
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/jackc/pgx/v5 v5.4.0
-	github.com/microsoft/go-mssqldb v1.1.0
+	github.com/microsoft/go-mssqldb v1.6.0
 	github.com/ory/dockertest/v3 v3.10.0
 	github.com/vertica/vertica-sql-go v1.3.2
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.42.1
@@ -66,12 +66,12 @@ require (
 	github.com/ydb-platform/ydb-go-genproto v0.0.0-20221215182650-986f9d10542f // indirect
 	go.opentelemetry.io/otel v1.16.0 // indirect
 	go.opentelemetry.io/otel/trace v1.16.0 // indirect
-	golang.org/x/crypto v0.10.0 // indirect
+	golang.org/x/crypto v0.12.0 // indirect
 	golang.org/x/mod v0.11.0 // indirect
-	golang.org/x/net v0.11.0 // indirect
+	golang.org/x/net v0.14.0 // indirect
 	golang.org/x/sync v0.3.0 // indirect
-	golang.org/x/sys v0.9.0 // indirect
-	golang.org/x/text v0.10.0 // indirect
+	golang.org/x/sys v0.11.0 // indirect
+	golang.org/x/text v0.12.0 // indirect
 	golang.org/x/tools v0.10.0 // indirect
 	google.golang.org/genproto v0.0.0-20220617124728-180714bec0ad // indirect
 	google.golang.org/grpc v1.50.1 // indirect
